@@ -124,59 +124,116 @@ class PerspectiveService {
     return dst;
   }
 
-  /// Automatically detect quadrilateral document boundaries from image using radial gradient edge detection
+  /// Automatically detect quadrilateral document boundaries from image
+  /// using outside-in border edge scanning with geometry validation.
   static DocumentQuad detectDocumentCorners(img.Image image) {
     const maxDim = 320;
     final double scale = min(maxDim / image.width, maxDim / image.height);
-    final int w = (image.width * scale).round();
-    final int h = (image.height * scale).round();
+    final int w = (image.width * scale).round().clamp(50, 800);
+    final int h = (image.height * scale).round().clamp(50, 800);
 
     final small = img.copyResize(image, width: w, height: h);
     final gray = img.grayscale(small);
     final edges = img.sobel(gray);
 
-    final cx = w / 2.0;
-    final cy = h / 2.0;
+    // Compute border noise baseline from outer perimeter
+    double borderSum = 0;
+    int borderCount = 0;
+    for (int x = 0; x < w; x++) {
+      borderSum += edges.getPixel(x, 1).luminance;
+      borderSum += edges.getPixel(x, h - 2).luminance;
+      borderCount += 2;
+    }
+    for (int y = 0; y < h; y++) {
+      borderSum += edges.getPixel(1, y).luminance;
+      borderSum += edges.getPixel(w - 2, y).luminance;
+      borderCount += 2;
+    }
+    final double borderMean = borderCount > 0 ? (borderSum / borderCount) : 0.05;
+    final double edgeThreshold = max(0.18, borderMean * 1.8);
 
-    Offset findCorner(double startX, double startY, double targetX, double targetY) {
-      const steps = 70;
-      double bestX = startX;
-      double bestY = startY;
-      double maxGrad = 0.0;
-      bool foundStrong = false;
-
-      // Scan inward along diagonal ray towards center
-      for (int i = 3; i < steps; i++) {
-        final t = i / steps.toDouble();
-        if (t > 0.65) break; // Don't scan too close to center
-
-        final x = (startX + (targetX - startX) * t).round().clamp(0, w - 1);
-        final y = (startY + (targetY - startY) * t).round().clamp(0, h - 1);
-
-        final lum = edges.getPixel(x, y).luminance;
-        if (lum > 0.20 && lum > maxGrad) {
-          maxGrad = lum.toDouble();
-          bestX = x.toDouble();
-          bestY = y.toDouble();
-          foundStrong = true;
+    // Scan from top down to find top document edge
+    double findTopEdge(double xNorm) {
+      final x = (xNorm * w).round().clamp(0, w - 1);
+      final maxScanY = (h * 0.45).round();
+      for (int y = 3; y < maxScanY; y++) {
+        if (edges.getPixel(x, y).luminance > edgeThreshold) {
+          return y / h;
         }
       }
-
-      if (!foundStrong) {
-        bestX = startX + (targetX - startX) * 0.10;
-        bestY = startY + (targetY - startY) * 0.10;
-      }
-
-      return Offset(
-        (bestX / w).clamp(0.03, 0.97),
-        (bestY / h).clamp(0.03, 0.97),
-      );
+      return 0.04;
     }
 
-    final tl = findCorner(0, 0, cx, cy);
-    final tr = findCorner(w.toDouble(), 0, cx, cy);
-    final br = findCorner(w.toDouble(), h.toDouble(), cx, cy);
-    final bl = findCorner(0, h.toDouble(), cx, cy);
+    // Scan from bottom up to find bottom document edge
+    double findBottomEdge(double xNorm) {
+      final x = (xNorm * w).round().clamp(0, w - 1);
+      final minScanY = (h * 0.55).round();
+      for (int y = h - 4; y > minScanY; y--) {
+        if (edges.getPixel(x, y).luminance > edgeThreshold) {
+          return y / h;
+        }
+      }
+      return 0.96;
+    }
+
+    // Scan from left inward to find left document edge
+    double findLeftEdge(double yNorm) {
+      final y = (yNorm * h).round().clamp(0, h - 1);
+      final maxScanX = (w * 0.45).round();
+      for (int x = 3; x < maxScanX; x++) {
+        if (edges.getPixel(x, y).luminance > edgeThreshold) {
+          return x / w;
+        }
+      }
+      return 0.04;
+    }
+
+    // Scan from right inward to find right document edge
+    double findRightEdge(double yNorm) {
+      final y = (yNorm * h).round().clamp(0, h - 1);
+      final minScanX = (w * 0.55).round();
+      for (int x = w - 4; x > minScanX; x--) {
+        if (edges.getPixel(x, y).luminance > edgeThreshold) {
+          return x / w;
+        }
+      }
+      return 0.96;
+    }
+
+    // Multi-point sampling for perspective corners
+    final topAtLeft = findTopEdge(0.20);
+    final topAtRight = findTopEdge(0.80);
+    final botAtLeft = findBottomEdge(0.20);
+    final botAtRight = findBottomEdge(0.80);
+
+    final leftAtTop = findLeftEdge(0.20);
+    final leftAtBot = findLeftEdge(0.80);
+    final rightAtTop = findRightEdge(0.20);
+    final rightAtBot = findRightEdge(0.80);
+
+    final tl = Offset(leftAtTop.clamp(0.02, 0.40), topAtLeft.clamp(0.02, 0.40));
+    final tr = Offset(rightAtTop.clamp(0.60, 0.98), topAtRight.clamp(0.02, 0.40));
+    final br = Offset(rightAtBot.clamp(0.60, 0.98), botAtRight.clamp(0.60, 0.98));
+    final bl = Offset(leftAtBot.clamp(0.02, 0.40), botAtLeft.clamp(0.60, 0.98));
+
+    // Calculate quadrilateral area using Shoelace formula
+    final area = 0.5 * (
+      (tl.dx * tr.dy - tr.dx * tl.dy) +
+      (tr.dx * br.dy - br.dx * tr.dy) +
+      (br.dx * bl.dy - bl.dx * br.dy) +
+      (bl.dx * tl.dy - tl.dx * bl.dy)
+    ).abs();
+
+    // Sanity check: must be convex, valid boundaries, and cover reasonable area (>35%)
+    if (area < 0.35 || tr.dx <= tl.dx || br.dx <= bl.dx || bl.dy <= tl.dy || br.dy <= tr.dy) {
+      // Default clean document frame with 4% margins
+      return const DocumentQuad(
+        topLeft: Offset(0.04, 0.04),
+        topRight: Offset(0.96, 0.04),
+        bottomRight: Offset(0.96, 0.96),
+        bottomLeft: Offset(0.04, 0.96),
+      );
+    }
 
     return DocumentQuad(
       topLeft: tl,

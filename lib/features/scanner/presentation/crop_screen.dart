@@ -42,8 +42,10 @@ class _CropScreenState extends State<CropScreen> {
   Offset _br = const Offset(0.92, 0.92);
   Offset _bl = const Offset(0.08, 0.92);
 
-  // Active handle being dragged
-  int? _activeCornerIndex; // 0=tl, 1=tr, 2=br, 3=bl
+  // Active handle being dragged:
+  // 0..3: Corners (TL, TR, BR, BL), 4..7: Edges (Top, Right, Bottom, Left), 8: Body Pan
+  int? _activeTarget;
+  Offset? _lastPanPos;
   Offset? _touchPosition;
 
   int _currentRotation = 0; // 0, 90, 180, 270
@@ -117,6 +119,128 @@ class _CropScreenState extends State<CropScreen> {
     );
   }
 
+  void _updateHandleDelta(int target, double dx, double dy) {
+    setState(() {
+      switch (target) {
+        case 0: // Top-Left corner
+          final newX = (_tl.dx + dx).clamp(0.0, _tr.dx - 0.05);
+          final newY = (_tl.dy + dy).clamp(0.0, _bl.dy - 0.05);
+          _tl = Offset(newX, newY);
+          break;
+        case 1: // Top-Right corner
+          final newX = (_tr.dx + dx).clamp(_tl.dx + 0.05, 1.0);
+          final newY = (_tr.dy + dy).clamp(0.0, _br.dy - 0.05);
+          _tr = Offset(newX, newY);
+          break;
+        case 2: // Bottom-Right corner
+          final newX = (_br.dx + dx).clamp(_bl.dx + 0.05, 1.0);
+          final newY = (_br.dy + dy).clamp(_tr.dy + 0.05, 1.0);
+          _br = Offset(newX, newY);
+          break;
+        case 3: // Bottom-Left corner
+          final newX = (_bl.dx + dx).clamp(0.0, _br.dx - 0.05);
+          final newY = (_bl.dy + dy).clamp(_tl.dy + 0.05, 1.0);
+          _bl = Offset(newX, newY);
+          break;
+        case 4: // Top Edge
+          final newTlY = (_tl.dy + dy).clamp(0.0, _bl.dy - 0.05);
+          final newTrY = (_tr.dy + dy).clamp(0.0, _br.dy - 0.05);
+          _tl = Offset(_tl.dx, newTlY);
+          _tr = Offset(_tr.dx, newTrY);
+          break;
+        case 5: // Right Edge
+          final newTrX = (_tr.dx + dx).clamp(_tl.dx + 0.05, 1.0);
+          final newBrX = (_br.dx + dx).clamp(_bl.dx + 0.05, 1.0);
+          _tr = Offset(newTrX, _tr.dy);
+          _br = Offset(newBrX, _br.dy);
+          break;
+        case 6: // Bottom Edge
+          final newBlY = (_bl.dy + dy).clamp(_tl.dy + 0.05, 1.0);
+          final newBrY = (_br.dy + dy).clamp(_tr.dy + 0.05, 1.0);
+          _bl = Offset(_bl.dx, newBlY);
+          _br = Offset(_br.dx, newBrY);
+          break;
+        case 7: // Left Edge
+          final newTlX = (_tl.dx + dx).clamp(0.0, _tr.dx - 0.05);
+          final newBlX = (_bl.dx + dx).clamp(0.0, _br.dx - 0.05);
+          _tl = Offset(newTlX, _tl.dy);
+          _bl = Offset(newBlX, _bl.dy);
+          break;
+        case 8: // Entire Box Move
+          final minX = min(min(_tl.dx, _tr.dx), min(_bl.dx, _br.dx));
+          final maxX = max(max(_tl.dx, _tr.dx), max(_bl.dx, _br.dx));
+          final minY = min(min(_tl.dy, _tr.dy), min(_bl.dy, _br.dy));
+          final maxY = max(max(_tl.dy, _tr.dy), max(_bl.dy, _br.dy));
+
+          final safeDx = dx.clamp(-minX, 1.0 - maxX);
+          final safeDy = dy.clamp(-minY, 1.0 - maxY);
+
+          _tl = Offset(_tl.dx + safeDx, _tl.dy + safeDy);
+          _tr = Offset(_tr.dx + safeDx, _tr.dy + safeDy);
+          _br = Offset(_br.dx + safeDx, _br.dy + safeDy);
+          _bl = Offset(_bl.dx + safeDx, _bl.dy + safeDy);
+          break;
+      }
+    });
+  }
+
+  int _findHitTarget(Offset touch, double w, double h) {
+    final corners = [
+      Offset(_tl.dx * w, _tl.dy * h),
+      Offset(_tr.dx * w, _tr.dy * h),
+      Offset(_br.dx * w, _br.dy * h),
+      Offset(_bl.dx * w, _bl.dy * h),
+    ];
+
+    // 1. Check corners (48dp touch radius)
+    for (int i = 0; i < 4; i++) {
+      if ((touch - corners[i]).distance <= 48.0) {
+        return i;
+      }
+    }
+
+    // 2. Check edge midpoints (40dp touch radius)
+    final edges = [
+      Offset((_tl.dx + _tr.dx) * 0.5 * w, (_tl.dy + _tr.dy) * 0.5 * h),
+      Offset((_tr.dx + _br.dx) * 0.5 * w, (_tr.dy + _br.dy) * 0.5 * h),
+      Offset((_bl.dx + _br.dx) * 0.5 * w, (_bl.dy + _br.dy) * 0.5 * h),
+      Offset((_tl.dx + _bl.dx) * 0.5 * w, (_tl.dy + _bl.dy) * 0.5 * h),
+    ];
+    for (int i = 0; i < 4; i++) {
+      if ((touch - edges[i]).distance <= 40.0) {
+        return 4 + i;
+      }
+    }
+
+    // 3. Check inside box
+    if (_isInsideQuad(touch, corners)) {
+      return 8;
+    }
+
+    // 4. Default to closest corner
+    int closest = 0;
+    double minD = double.infinity;
+    for (int i = 0; i < 4; i++) {
+      final d = (touch - corners[i]).distance;
+      if (d < minD) {
+        minD = d;
+        closest = i;
+      }
+    }
+    return closest;
+  }
+
+  bool _isInsideQuad(Offset p, List<Offset> poly) {
+    bool inside = false;
+    for (int i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      if (((poly[i].dy > p.dy) != (poly[j].dy > p.dy)) &&
+          (p.dx < (poly[j].dx - poly[i].dx) * (p.dy - poly[i].dy) / (poly[j].dy - poly[i].dy) + poly[i].dx)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
   Future<void> _applyPerspectiveAndContinue() async {
     if (_decodedImage == null || _isProcessingWarp) return;
 
@@ -178,33 +302,18 @@ class _CropScreenState extends State<CropScreen> {
         backgroundColor: Colors.black,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close_rounded, color: Colors.white),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           l10n.t('cropTitle'),
-          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
+          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
         actions: [
-          IconButton(
-            tooltip: l10n.t('rotateLeft'),
-            icon: const Icon(Icons.rotate_left_rounded, color: Colors.white),
-            onPressed: () => _rotateImage(false),
-          ),
-          IconButton(
-            tooltip: l10n.t('rotateRight'),
-            icon: const Icon(Icons.rotate_right_rounded, color: Colors.white),
-            onPressed: () => _rotateImage(true),
-          ),
           IconButton(
             tooltip: l10n.t('fullImage'),
             icon: const Icon(Icons.fullscreen_rounded, color: Colors.white),
             onPressed: _resetToFull,
-          ),
-          IconButton(
-            tooltip: l10n.t('autoDetect'),
-            icon: const Icon(Icons.auto_awesome_rounded, color: AppColors.secondary),
-            onPressed: _autoDetectCorners,
           ),
         ],
       ),
@@ -216,7 +325,7 @@ class _CropScreenState extends State<CropScreen> {
                 Expanded(
                   child: Center(
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                       child: LayoutBuilder(
                         builder: (ctx, constraints) {
                           if (_imageBytes == null) return const SizedBox();
@@ -234,6 +343,16 @@ class _CropScreenState extends State<CropScreen> {
                             renderW = renderH * imgAspect;
                           }
 
+                          final tlPix = Offset(_tl.dx * renderW, _tl.dy * renderH);
+                          final trPix = Offset(_tr.dx * renderW, _tr.dy * renderH);
+                          final brPix = Offset(_br.dx * renderW, _br.dy * renderH);
+                          final blPix = Offset(_bl.dx * renderW, _bl.dy * renderH);
+
+                          final topMidPix = Offset((tlPix.dx + trPix.dx) * 0.5, (tlPix.dy + trPix.dy) * 0.5);
+                          final rightMidPix = Offset((trPix.dx + brPix.dx) * 0.5, (trPix.dy + brPix.dy) * 0.5);
+                          final botMidPix = Offset((blPix.dx + brPix.dx) * 0.5, (blPix.dy + brPix.dy) * 0.5);
+                          final leftMidPix = Offset((tlPix.dx + blPix.dx) * 0.5, (tlPix.dy + blPix.dy) * 0.5);
+
                           return Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.center,
@@ -248,87 +367,69 @@ class _CropScreenState extends State<CropScreen> {
                                 ),
                               ),
 
-                              // Quadrilateral lines & midpoints
+                              // Quadrilateral lines & shadow overlay
                               SizedBox(
                                 width: renderW,
                                 height: renderH,
                                 child: CustomPaint(
                                   painter: CropBorderPainter(
-                                    tl: Offset(_tl.dx * renderW, _tl.dy * renderH),
-                                    tr: Offset(_tr.dx * renderW, _tr.dy * renderH),
-                                    br: Offset(_br.dx * renderW, _br.dy * renderH),
-                                    bl: Offset(_bl.dx * renderW, _bl.dy * renderH),
+                                    tl: tlPix,
+                                    tr: trPix,
+                                    br: brPix,
+                                    bl: blPix,
                                   ),
                                 ),
                               ),
 
-                              // Gesture detector for moving corner handles
+                              // Gesture detector for moving corners, edges, and body
                               Positioned.fill(
                                 child: GestureDetector(
                                   onPanStart: (details) {
                                     final pos = details.localPosition;
-                                    final cornerIdx = _findClosestCorner(pos, renderW, renderH);
+                                    final target = _findHitTarget(pos, renderW, renderH);
+                                    HapticFeedback.selectionClick();
                                     setState(() {
-                                      _activeCornerIndex = cornerIdx;
+                                      _activeTarget = target;
+                                      _lastPanPos = pos;
                                       _touchPosition = pos;
                                     });
                                   },
                                   onPanUpdate: (details) {
-                                    if (_activeCornerIndex == null) return;
+                                    if (_activeTarget == null || _lastPanPos == null) return;
                                     final pos = details.localPosition;
-                                    final normX = (pos.dx / renderW).clamp(0.0, 1.0);
-                                    final normY = (pos.dy / renderH).clamp(0.0, 1.0);
+                                    final dx = (pos.dx - _lastPanPos!.dx) / renderW;
+                                    final dy = (pos.dy - _lastPanPos!.dy) / renderH;
+                                    _lastPanPos = pos;
 
+                                    _updateHandleDelta(_activeTarget!, dx, dy);
                                     setState(() {
                                       _touchPosition = pos;
-                                      switch (_activeCornerIndex) {
-                                        case 0:
-                                          _tl = Offset(normX, normY);
-                                          break;
-                                        case 1:
-                                          _tr = Offset(normX, normY);
-                                          break;
-                                        case 2:
-                                          _br = Offset(normX, normY);
-                                          break;
-                                        case 3:
-                                          _bl = Offset(normX, normY);
-                                          break;
-                                      }
                                     });
                                   },
                                   onPanEnd: (_) {
                                     setState(() {
-                                      _activeCornerIndex = null;
+                                      _activeTarget = null;
+                                      _lastPanPos = null;
                                       _touchPosition = null;
                                     });
                                   },
                                 ),
                               ),
 
-                              // Corner 0: Top-Left Handle
-                              _buildHandlePositioned(
-                                Offset(_tl.dx * renderW, _tl.dy * renderH),
-                                isActive: _activeCornerIndex == 0,
-                              ),
-                              // Corner 1: Top-Right Handle
-                              _buildHandlePositioned(
-                                Offset(_tr.dx * renderW, _tr.dy * renderH),
-                                isActive: _activeCornerIndex == 1,
-                              ),
-                              // Corner 2: Bottom-Right Handle
-                              _buildHandlePositioned(
-                                Offset(_br.dx * renderW, _br.dy * renderH),
-                                isActive: _activeCornerIndex == 2,
-                              ),
-                              // Corner 3: Bottom-Left Handle
-                              _buildHandlePositioned(
-                                Offset(_bl.dx * renderW, _bl.dy * renderH),
-                                isActive: _activeCornerIndex == 3,
-                              ),
+                              // 4 Edge Midpoint Handles (Draggable sides)
+                              _buildEdgeHandlePositioned(topMidPix, isVertical: false, isActive: _activeTarget == 4),
+                              _buildEdgeHandlePositioned(rightMidPix, isVertical: true, isActive: _activeTarget == 5),
+                              _buildEdgeHandlePositioned(botMidPix, isVertical: false, isActive: _activeTarget == 6),
+                              _buildEdgeHandlePositioned(leftMidPix, isVertical: true, isActive: _activeTarget == 7),
+
+                              // 4 Corner Handles (Draggable corners)
+                              _buildCornerHandlePositioned(tlPix, isActive: _activeTarget == 0),
+                              _buildCornerHandlePositioned(trPix, isActive: _activeTarget == 1),
+                              _buildCornerHandlePositioned(brPix, isActive: _activeTarget == 2),
+                              _buildCornerHandlePositioned(blPix, isActive: _activeTarget == 3),
 
                               // Zoom Magnifier Loupe above touch position
-                              if (_activeCornerIndex != null && _touchPosition != null)
+                              if (_activeTarget != null && _touchPosition != null && _activeTarget! < 4)
                                 Positioned(
                                   left: (_touchPosition!.dx - 55).clamp(10, renderW - 110),
                                   top: (_touchPosition!.dy - 120).clamp(10, renderH - 110),
@@ -342,13 +443,13 @@ class _CropScreenState extends State<CropScreen> {
                   ),
                 ),
 
-                // Bottom instructions and action buttons
+                // Bottom sleek ergonomic controls
                 Container(
                   padding: EdgeInsets.only(
-                    left: 24,
-                    right: 24,
-                    top: 16,
-                    bottom: MediaQuery.of(context).padding.bottom + 16,
+                    left: 20,
+                    right: 20,
+                    top: 14,
+                    bottom: MediaQuery.of(context).padding.bottom + 14,
                   ),
                   decoration: const BoxDecoration(
                     color: Color(0xFF111827),
@@ -357,66 +458,42 @@ class _CropScreenState extends State<CropScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Quick Tools Row
                       Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          const Icon(Icons.crop_rotate_rounded, color: AppColors.secondary, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              l10n.t('cropInstruction'),
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 13,
-                                height: 1.35,
-                              ),
+                          TextButton.icon(
+                            onPressed: _autoDetectCorners,
+                            icon: const Icon(Icons.auto_awesome_rounded, color: AppColors.secondary, size: 18),
+                            label: Text(
+                              l10n.t('autoDetect'),
+                              style: const TextStyle(color: AppColors.secondary, fontWeight: FontWeight.bold, fontSize: 13),
                             ),
+                            style: TextButton.styleFrom(
+                              backgroundColor: AppColors.secondary.withOpacity(0.15),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            ),
+                          ),
+                          _buildQuickActionBtn(
+                            icon: Icons.fullscreen_rounded,
+                            label: l10n.t('fullImage'),
+                            onTap: _resetToFull,
+                          ),
+                          _buildQuickActionBtn(
+                            icon: Icons.rotate_left_rounded,
+                            label: l10n.t('rotateLeft'),
+                            onTap: () => _rotateImage(false),
+                          ),
+                          _buildQuickActionBtn(
+                            icon: Icons.rotate_right_rounded,
+                            label: l10n.t('rotateRight'),
+                            onTap: () => _rotateImage(true),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      // Crop Toolbar: Auto Detect, Full Area, Rotate Left, Rotate Right
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.06),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.white12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            TextButton.icon(
-                              onPressed: _autoDetectCorners,
-                              icon: const Icon(Icons.auto_awesome_rounded, color: AppColors.secondary, size: 18),
-                              label: Text(
-                                l10n.t('autoDetect'),
-                                style: const TextStyle(color: AppColors.secondary, fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                              style: TextButton.styleFrom(
-                                backgroundColor: AppColors.secondary.withOpacity(0.15),
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: l10n.t('fullImage'),
-                              icon: const Icon(Icons.fullscreen_rounded, color: Colors.white),
-                              onPressed: _resetToFull,
-                            ),
-                            IconButton(
-                              tooltip: l10n.t('rotateLeft'),
-                              icon: const Icon(Icons.rotate_left_rounded, color: Colors.white),
-                              onPressed: () => _rotateImage(false),
-                            ),
-                            IconButton(
-                              tooltip: l10n.t('rotateRight'),
-                              icon: const Icon(Icons.rotate_right_rounded, color: Colors.white),
-                              onPressed: () => _rotateImage(true),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 16),
+                      // Action Buttons Row (Retake & Next)
                       Row(
                         children: [
                           Expanded(
@@ -439,7 +516,7 @@ class _CropScreenState extends State<CropScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 14),
                           Expanded(
                             flex: 2,
                             child: ElevatedButton(
@@ -484,29 +561,35 @@ class _CropScreenState extends State<CropScreen> {
     );
   }
 
-  int _findClosestCorner(Offset touch, double w, double h) {
-    final corners = [
-      Offset(_tl.dx * w, _tl.dy * h),
-      Offset(_tr.dx * w, _tr.dy * h),
-      Offset(_br.dx * w, _br.dy * h),
-      Offset(_bl.dx * w, _bl.dy * h),
-    ];
-
-    int closest = 0;
-    double minD = double.infinity;
-    for (int i = 0; i < 4; i++) {
-      final dx = corners[i].dx - touch.dx;
-      final dy = corners[i].dy - touch.dy;
-      final d = dx * dx + dy * dy;
-      if (d < minD) {
-        minD = d;
-        closest = i;
-      }
-    }
-    return closest;
+  Widget _buildQuickActionBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 22),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  Widget _buildHandlePositioned(Offset pos, {bool isActive = false}) {
+  Widget _buildCornerHandlePositioned(Offset pos, {bool isActive = false}) {
     return Positioned(
       left: pos.dx - 18,
       top: pos.dy - 18,
@@ -534,6 +617,31 @@ class _CropScreenState extends State<CropScreen> {
                 shape: BoxShape.circle,
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEdgeHandlePositioned(Offset pos, {required bool isVertical, bool isActive = false}) {
+    return Positioned(
+      left: pos.dx - (isVertical ? 7 : 18),
+      top: pos.dy - (isVertical ? 18 : 7),
+      child: IgnorePointer(
+        child: Container(
+          width: isVertical ? 14 : 36,
+          height: isVertical ? 36 : 14,
+          decoration: BoxDecoration(
+            color: isActive ? AppColors.secondary : Colors.white,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: AppColors.primary, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 6,
+                offset: const Offset(0, 1),
+              ),
+            ],
           ),
         ),
       ),
@@ -575,7 +683,7 @@ class _CropScreenState extends State<CropScreen> {
   }
 }
 
-/// Custom painter for quadrilateral borders and mid-point bars
+/// Custom painter for quadrilateral borders and alignment grid
 class CropBorderPainter extends CustomPainter {
   final Offset tl;
   final Offset tr;
@@ -603,7 +711,30 @@ class CropBorderPainter extends CustomPainter {
       ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
       ..addPath(path, Offset.zero)
       ..fillType = PathFillType.evenOdd;
-    canvas.drawPath(bgPath, Paint()..color = Colors.black.withOpacity(0.45));
+    canvas.drawPath(bgPath, Paint()..color = Colors.black.withOpacity(0.50));
+
+    // Subtle 3x3 alignment grid inside document quad
+    final gridPaint = Paint()
+      ..color = Colors.white.withOpacity(0.18)
+      ..strokeWidth = 1.0;
+
+    // Horizontal grid lines
+    final h1L = Offset(tl.dx + (bl.dx - tl.dx) / 3, tl.dy + (bl.dy - tl.dy) / 3);
+    final h1R = Offset(tr.dx + (br.dx - tr.dx) / 3, tr.dy + (br.dy - tr.dy) / 3);
+    canvas.drawLine(h1L, h1R, gridPaint);
+
+    final h2L = Offset(tl.dx + (bl.dx - tl.dx) * 2 / 3, tl.dy + (bl.dy - tl.dy) * 2 / 3);
+    final h2R = Offset(tr.dx + (br.dx - tr.dx) * 2 / 3, tr.dy + (br.dy - tr.dy) * 2 / 3);
+    canvas.drawLine(h2L, h2R, gridPaint);
+
+    // Vertical grid lines
+    final v1T = Offset(tl.dx + (tr.dx - tl.dx) / 3, tl.dy + (tr.dy - tl.dy) / 3);
+    final v1B = Offset(bl.dx + (br.dx - bl.dx) / 3, bl.dy + (br.dy - bl.dy) / 3);
+    canvas.drawLine(v1T, v1B, gridPaint);
+
+    final v2T = Offset(tl.dx + (tr.dx - tl.dx) * 2 / 3, tl.dy + (tr.dy - tl.dy) * 2 / 3);
+    final v2B = Offset(bl.dx + (br.dx - bl.dx) * 2 / 3, bl.dy + (br.dy - bl.dy) * 2 / 3);
+    canvas.drawLine(v2T, v2B, gridPaint);
 
     // Cyan border line
     final linePaint = Paint()
@@ -611,34 +742,9 @@ class CropBorderPainter extends CustomPainter {
       ..strokeWidth = 2.5
       ..style = PaintingStyle.stroke;
     canvas.drawPath(path, linePaint);
-
-    // Midpoint bar handles
-    final midPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 4
-      ..strokeCap = StrokeCap.round;
-
-    void drawMidBar(Offset p1, Offset p2) {
-      final mid = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
-      final dx = p2.dx - p1.dx;
-      final dy = p2.dy - p1.dy;
-      final len = sqrt(dx * dx + dy * dy);
-      if (len == 0) return;
-      final ux = dx / len;
-      final uy = dy / len;
-      canvas.drawLine(
-        Offset(mid.dx - ux * 10, mid.dy - uy * 10),
-        Offset(mid.dx + ux * 10, mid.dy + uy * 10),
-        midPaint,
-      );
-    }
-
-    drawMidBar(tl, tr);
-    drawMidBar(tr, br);
-    drawMidBar(br, bl);
-    drawMidBar(bl, tl);
   }
 
   @override
-  bool shouldRepaint(covariant CropBorderPainter oldDelegate) => true;
+  bool shouldRepaint(covariant CropBorderPainter oldDelegate) =>
+      oldDelegate.tl != tl || oldDelegate.tr != tr || oldDelegate.br != br || oldDelegate.bl != bl;
 }
