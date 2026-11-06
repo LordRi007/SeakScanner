@@ -1,0 +1,48 @@
+name: seak_scanner
+description: "SeakScanner - Smart Document Scanner & PDF Manager"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.5.1
+  camera: ^0.11.0+2
+  image_picker: ^1.1.2
+  image: 4.2.0
+  pdf: ^3.10.8
+  printing: ^5.13.2
+  path_provider: ^2.1.3
+  sqflite: ^2.3.3+1
+  sqflite_common_ffi: ^2.3.3
+  path: ^1.9.0
+  uuid: ^4.4.0
+  intl: ^0.20.2
+  google_fonts: ^6.2.1
+  shared_preferences: ^2.2.3
+  flutter_animate: ^4.5.0
+  local_auth: ^2.2.0
+  share_plus: ^10.0.0
+  open_filex: ^4.5.0
+  excel: ^4.0.6
+  archive: ^3.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
