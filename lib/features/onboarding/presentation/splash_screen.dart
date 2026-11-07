@@ -86,14 +86,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> with SingleTickerPr
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 90,
-                  height: 90,
+                  width: 96,
+                  height: 96,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.primary, AppColors.secondary],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
                     borderRadius: BorderRadius.circular(26),
                     boxShadow: [
                       BoxShadow(
@@ -103,11 +98,25 @@ class _SplashScreenState extends ConsumerState<SplashScreen> with SingleTickerPr
                       ),
                     ],
                   ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.document_scanner_rounded,
-                      color: Colors.white,
-                      size: 48,
+                  clipBehavior: Clip.antiAlias,
+                  child: Image.asset(
+                    'assets/icons/app_logo.png',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [AppColors.primary, AppColors.secondary],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.document_scanner_rounded,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      ),
                     ),
                   ),
                 ),

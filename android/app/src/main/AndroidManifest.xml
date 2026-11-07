@@ -13,11 +13,13 @@
     <application
         android:label="SeakScanner"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
         <activity
             android:name="com.seakscanner.seak_scanner.MainActivity"
             android:label="SeakScanner"
             android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"

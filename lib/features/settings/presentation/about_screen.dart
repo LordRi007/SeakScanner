@@ -21,14 +21,9 @@ class AboutScreen extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 88,
-                height: 88,
+                width: 92,
+                height: 92,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppColors.primary, AppColors.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
                   borderRadius: BorderRadius.circular(24),
                   boxShadow: [
                     BoxShadow(
@@ -38,7 +33,21 @@ class AboutScreen extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: const Icon(Icons.document_scanner_rounded, color: Colors.white, size: 48),
+                clipBehavior: Clip.antiAlias,
+                child: Image.asset(
+                  'assets/icons/app_logo.png',
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [AppColors.primary, AppColors.secondary],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: const Icon(Icons.document_scanner_rounded, color: Colors.white, size: 48),
+                  ),
+                ),
               ),
               const SizedBox(height: 20),
               Text(
