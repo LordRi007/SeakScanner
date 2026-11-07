@@ -92,11 +92,22 @@ class _CropScreenState extends State<CropScreen> {
   }
 
   void _resetToFull() {
+    HapticFeedback.lightImpact();
     setState(() {
-      _tl = const Offset(0.02, 0.02);
-      _tr = const Offset(0.98, 0.02);
-      _br = const Offset(0.98, 0.98);
-      _bl = const Offset(0.02, 0.98);
+      _tl = const Offset(0.01, 0.01);
+      _tr = const Offset(0.99, 0.01);
+      _br = const Offset(0.99, 0.99);
+      _bl = const Offset(0.01, 0.99);
+    });
+  }
+
+  void _resetToDocumentFit() {
+    HapticFeedback.lightImpact();
+    setState(() {
+      _tl = const Offset(0.06, 0.06);
+      _tr = const Offset(0.94, 0.06);
+      _br = const Offset(0.94, 0.94);
+      _bl = const Offset(0.06, 0.94);
     });
   }
 
@@ -217,8 +228,8 @@ class _CropScreenState extends State<CropScreen> {
       return 8;
     }
 
-    // 4. Default to closest corner
-    int closest = 0;
+    // 4. Check closest corner if reasonably close
+    int closest = -1;
     double minD = double.infinity;
     for (int i = 0; i < 4; i++) {
       final d = (touch - corners[i]).distance;
@@ -227,7 +238,7 @@ class _CropScreenState extends State<CropScreen> {
         closest = i;
       }
     }
-    return closest;
+    return minD <= 64.0 ? closest : -1;
   }
 
   bool _isInsideQuad(Offset p, List<Offset> poly) {
@@ -387,6 +398,7 @@ class _CropScreenState extends State<CropScreen> {
                                   onPanStart: (details) {
                                     final pos = details.localPosition;
                                     final target = _findHitTarget(pos, renderW, renderH);
+                                    if (target < 0) return;
                                     HapticFeedback.selectionClick();
                                     setState(() {
                                       _activeTarget = target;
@@ -395,7 +407,7 @@ class _CropScreenState extends State<CropScreen> {
                                     });
                                   },
                                   onPanUpdate: (details) {
-                                    if (_activeTarget == null || _lastPanPos == null) return;
+                                    if (_activeTarget == null || _activeTarget! < 0 || _lastPanPos == null) return;
                                     final pos = details.localPosition;
                                     final dx = (pos.dx - _lastPanPos!.dx) / renderW;
                                     final dy = (pos.dy - _lastPanPos!.dy) / renderH;
@@ -458,32 +470,25 @@ class _CropScreenState extends State<CropScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Quick Tools Row
+                      // Quick Tools Row (Auto, Fit, Full, Rotate)
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          TextButton.icon(
-                            onPressed: _autoDetectCorners,
-                            icon: const Icon(Icons.auto_awesome_rounded, color: AppColors.secondary, size: 18),
-                            label: Text(
-                              l10n.t('autoDetect'),
-                              style: const TextStyle(color: AppColors.secondary, fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                            style: TextButton.styleFrom(
-                              backgroundColor: AppColors.secondary.withOpacity(0.15),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                            ),
+                          _buildQuickActionBtn(
+                            icon: Icons.auto_awesome_rounded,
+                            label: l10n.t('autoDetect'),
+                            iconColor: AppColors.secondary,
+                            onTap: _autoDetectCorners,
+                          ),
+                          _buildQuickActionBtn(
+                            icon: Icons.crop_portrait_rounded,
+                            label: l10n.t('fitPage'),
+                            onTap: _resetToDocumentFit,
                           ),
                           _buildQuickActionBtn(
                             icon: Icons.fullscreen_rounded,
                             label: l10n.t('fullImage'),
                             onTap: _resetToFull,
-                          ),
-                          _buildQuickActionBtn(
-                            icon: Icons.rotate_left_rounded,
-                            label: l10n.t('rotateLeft'),
-                            onTap: () => _rotateImage(false),
                           ),
                           _buildQuickActionBtn(
                             icon: Icons.rotate_right_rounded,
@@ -565,7 +570,9 @@ class _CropScreenState extends State<CropScreen> {
     required IconData icon,
     required String label,
     required VoidCallback onTap,
+    Color? iconColor,
   }) {
+    final effectiveColor = iconColor ?? Colors.white;
     return InkWell(
       onTap: () {
         HapticFeedback.lightImpact();
@@ -577,11 +584,15 @@ class _CropScreenState extends State<CropScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 22),
+            Icon(icon, color: effectiveColor, size: 22),
             const SizedBox(height: 4),
             Text(
               label,
-              style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                color: iconColor != null ? effectiveColor : Colors.white70,
+                fontSize: 11,
+                fontWeight: iconColor != null ? FontWeight.bold : FontWeight.w500,
+              ),
             ),
           ],
         ),

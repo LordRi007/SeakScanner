@@ -124,6 +124,7 @@ class AppLocalizations {
       'rotateLeft': 'Rotate Left',
       'rotateRight': 'Rotate Right',
       'autoDetect': 'Auto Detect',
+      'fitPage': 'Fit Page',
       'fullImage': 'Full Image',
 
       // Enhancement Filters
@@ -323,6 +324,7 @@ class AppLocalizations {
       'rotateLeft': 'បង្វិលឆ្វេង',
       'rotateRight': 'បង្វិលស្តាំ',
       'autoDetect': 'ចាប់ជ្រុងស្វ័យប្រវត្តិ',
+      'fitPage': 'តម្រៀបទំព័រ',
       'fullImage': 'រូបភាពពេញ',
 
       // Enhancement Filters

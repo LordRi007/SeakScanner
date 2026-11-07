@@ -125,96 +125,118 @@ class PerspectiveService {
   }
 
   /// Automatically detect quadrilateral document boundaries from image
-  /// using outside-in border edge scanning with geometry validation.
+  /// using blurred multi-profile density analysis and edge-guided corner refinement.
   static DocumentQuad detectDocumentCorners(img.Image image) {
-    const maxDim = 320;
-    final double scale = min(maxDim / image.width, maxDim / image.height);
-    final int w = (image.width * scale).round().clamp(50, 800);
-    final int h = (image.height * scale).round().clamp(50, 800);
+    const targetW = 240;
+    final double scale = targetW / image.width;
+    final int w = targetW;
+    final int h = (image.height * scale).round().clamp(60, 600);
 
     final small = img.copyResize(image, width: w, height: h);
     final gray = img.grayscale(small);
-    final edges = img.sobel(gray);
+    // Gaussian blur suppresses interior text and fine textures while keeping main borders
+    final blurred = img.gaussianBlur(gray, radius: 2);
+    final edges = img.sobel(blurred);
 
-    // Compute border noise baseline from outer perimeter
-    double borderSum = 0;
-    int borderCount = 0;
-    for (int x = 0; x < w; x++) {
-      borderSum += edges.getPixel(x, 1).luminance;
-      borderSum += edges.getPixel(x, h - 2).luminance;
-      borderCount += 2;
-    }
+    // Zero out outer 3 boundary pixels to remove Sobel convolution artifacts
     for (int y = 0; y < h; y++) {
-      borderSum += edges.getPixel(1, y).luminance;
-      borderSum += edges.getPixel(w - 2, y).luminance;
-      borderCount += 2;
-    }
-    final double borderMean = borderCount > 0 ? (borderSum / borderCount) : 0.05;
-    final double edgeThreshold = max(0.18, borderMean * 1.8);
-
-    // Scan from top down to find top document edge
-    double findTopEdge(double xNorm) {
-      final x = (xNorm * w).round().clamp(0, w - 1);
-      final maxScanY = (h * 0.45).round();
-      for (int y = 3; y < maxScanY; y++) {
-        if (edges.getPixel(x, y).luminance > edgeThreshold) {
-          return y / h;
+      for (int x = 0; x < w; x++) {
+        if (x < 3 || x >= w - 3 || y < 3 || y >= h - 3) {
+          edges.setPixelRgb(x, y, 0, 0, 0);
         }
       }
-      return 0.04;
     }
 
-    // Scan from bottom up to find bottom document edge
-    double findBottomEdge(double xNorm) {
-      final x = (xNorm * w).round().clamp(0, w - 1);
-      final minScanY = (h * 0.55).round();
-      for (int y = h - 4; y > minScanY; y--) {
-        if (edges.getPixel(x, y).luminance > edgeThreshold) {
-          return y / h;
+    // Measure perimeter background noise (rows 4..14)
+    double bgEdgeSum = 0;
+    int bgEdgeCount = 0;
+    for (int y = 4; y <= 14; y++) {
+      for (int x = 4; x < w - 4; x++) {
+        bgEdgeSum += edges.getPixel(x, y).luminance;
+        bgEdgeCount++;
+      }
+    }
+    final double bgMean = bgEdgeCount > 0 ? (bgEdgeSum / bgEdgeCount) : 25.0;
+    final double edgeThresh = max(32.0, bgMean * 1.35);
+
+    // Compute row and column edge densities
+    final rowScores = List<double>.filled(h, 0.0);
+    for (int y = 3; y < h - 3; y++) {
+      int count = 0;
+      for (int x = 3; x < w - 3; x++) {
+        if (edges.getPixel(x, y).luminance > edgeThresh) count++;
+      }
+      rowScores[y] = count / (w - 6);
+    }
+
+    final colScores = List<double>.filled(w, 0.0);
+    for (int x = 3; x < w - 3; x++) {
+      int count = 0;
+      for (int y = 3; y < h - 3; y++) {
+        if (edges.getPixel(x, y).luminance > edgeThresh) count++;
+      }
+      colScores[x] = count / (h - 6);
+    }
+
+    // 5% edge density marks start of document boundary
+    const densityThresh = 0.05;
+
+    int yTop = 4;
+    while (yTop < h * 0.45 && rowScores[yTop] < densityThresh) {
+      yTop++;
+    }
+
+    int yBot = h - 4;
+    while (yBot > h * 0.55 && rowScores[yBot] < densityThresh) {
+      yBot--;
+    }
+
+    int xLeft = 4;
+    while (xLeft < w * 0.45 && colScores[xLeft] < densityThresh) {
+      xLeft++;
+    }
+
+    int xRight = w - 4;
+    while (xRight > w * 0.55 && colScores[xRight] < densityThresh) {
+      xRight--;
+    }
+
+    // Local edge search helpers
+    double findEdgeY(int colX, int startY, int endY, int step) {
+      for (int y = startY; (step > 0 ? y <= endY : y >= endY); y += step) {
+        if (edges.getPixel(colX, y).luminance > edgeThresh) {
+          return y.toDouble();
         }
       }
-      return 0.96;
+      return startY.toDouble();
     }
 
-    // Scan from left inward to find left document edge
-    double findLeftEdge(double yNorm) {
-      final y = (yNorm * h).round().clamp(0, h - 1);
-      final maxScanX = (w * 0.45).round();
-      for (int x = 3; x < maxScanX; x++) {
-        if (edges.getPixel(x, y).luminance > edgeThreshold) {
-          return x / w;
+    double findEdgeX(int rowY, int startX, int endX, int step) {
+      for (int x = startX; (step > 0 ? x <= endX : x >= endX); x += step) {
+        if (edges.getPixel(x, rowY).luminance > edgeThresh) {
+          return x.toDouble();
         }
       }
-      return 0.04;
+      return startX.toDouble();
     }
 
-    // Scan from right inward to find right document edge
-    double findRightEdge(double yNorm) {
-      final y = (yNorm * h).round().clamp(0, h - 1);
-      final minScanX = (w * 0.55).round();
-      for (int x = w - 4; x > minScanX; x--) {
-        if (edges.getPixel(x, y).luminance > edgeThreshold) {
-          return x / w;
-        }
-      }
-      return 0.96;
-    }
+    // Refine corners along the 4 borders
+    final tlX = findEdgeX(yTop + 4, max(3, xLeft - 8), min(w - 3, xLeft + 20), 1) / w;
+    final tlY = findEdgeY(xLeft + 4, max(3, yTop - 8), min(h - 3, yTop + 20), 1) / h;
 
-    // Multi-point sampling for perspective corners
-    final topAtLeft = findTopEdge(0.20);
-    final topAtRight = findTopEdge(0.80);
-    final botAtLeft = findBottomEdge(0.20);
-    final botAtRight = findBottomEdge(0.80);
+    final trX = findEdgeX(yTop + 4, min(w - 4, xRight + 8), max(3, xRight - 20), -1) / w;
+    final trY = findEdgeY(xRight - 4, max(3, yTop - 8), min(h - 3, yTop + 20), 1) / h;
 
-    final leftAtTop = findLeftEdge(0.20);
-    final leftAtBot = findLeftEdge(0.80);
-    final rightAtTop = findRightEdge(0.20);
-    final rightAtBot = findRightEdge(0.80);
+    final brX = findEdgeX(yBot - 4, min(w - 4, xRight + 8), max(3, xRight - 20), -1) / w;
+    final brY = findEdgeY(xRight - 4, min(h - 4, yBot + 8), max(3, yBot - 20), -1) / h;
 
-    final tl = Offset(leftAtTop.clamp(0.02, 0.40), topAtLeft.clamp(0.02, 0.40));
-    final tr = Offset(rightAtTop.clamp(0.60, 0.98), topAtRight.clamp(0.02, 0.40));
-    final br = Offset(rightAtBot.clamp(0.60, 0.98), botAtRight.clamp(0.60, 0.98));
-    final bl = Offset(leftAtBot.clamp(0.02, 0.40), botAtLeft.clamp(0.60, 0.98));
+    final blX = findEdgeX(yBot - 4, max(3, xLeft - 8), min(w - 3, xLeft + 20), 1) / w;
+    final blY = findEdgeY(xLeft + 4, min(h - 4, yBot + 8), max(3, yBot - 20), -1) / h;
+
+    final tl = Offset(tlX.clamp(0.03, 0.40), tlY.clamp(0.02, 0.40));
+    final tr = Offset(trX.clamp(0.60, 0.97), trY.clamp(0.02, 0.40));
+    final br = Offset(brX.clamp(0.60, 0.97), brY.clamp(0.60, 0.98));
+    final bl = Offset(blX.clamp(0.03, 0.40), blY.clamp(0.60, 0.98));
 
     // Calculate quadrilateral area using Shoelace formula
     final area = 0.5 * (
@@ -224,14 +246,14 @@ class PerspectiveService {
       (bl.dx * tl.dy - tl.dx * bl.dy)
     ).abs();
 
-    // Sanity check: must be convex, valid boundaries, and cover reasonable area (>35%)
-    if (area < 0.35 || tr.dx <= tl.dx || br.dx <= bl.dx || bl.dy <= tl.dy || br.dy <= tr.dy) {
-      // Default clean document frame with 4% margins
+    // Sanity check: must be convex, valid boundaries, and cover reasonable area (>25%)
+    if (area < 0.25 || tr.dx <= tl.dx + 0.1 || br.dx <= bl.dx + 0.1 || bl.dy <= tl.dy + 0.1 || br.dy <= tr.dy + 0.1) {
+      // Default clean document frame with 6% margins
       return const DocumentQuad(
-        topLeft: Offset(0.04, 0.04),
-        topRight: Offset(0.96, 0.04),
-        bottomRight: Offset(0.96, 0.96),
-        bottomLeft: Offset(0.04, 0.96),
+        topLeft: Offset(0.06, 0.06),
+        topRight: Offset(0.94, 0.06),
+        bottomRight: Offset(0.94, 0.94),
+        bottomLeft: Offset(0.06, 0.94),
       );
     }
 
